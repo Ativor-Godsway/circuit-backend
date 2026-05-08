@@ -3,6 +3,7 @@ import CommunityMessage from '../models/CommunityMessage.js';
 import Message from '../models/Message.js';
 import User from '../models/User.js';
 import { updateStreak } from '../utils/streakUpdater.js';
+import { updateCircuitScore } from '../utils/circuitScoreUpdater.js';
 
 // userId -> socketId
 const onlineUsers = new Map();
@@ -54,7 +55,10 @@ export const initSocket = (io) => {
         });
 
         const populated = await msg.populate('sender', '_id name avatar');
-        if (userId) await updateStreak(userId, data.communityId);
+        if (userId) {
+          await updateStreak(userId, data.communityId);
+          updateCircuitScore(userId); // non-blocking
+        }
 
         io.to(`community:${data.communityId}`).emit('receiveCommunityMessage', populated);
       } catch {

@@ -17,6 +17,9 @@ import userRoutes from "./routes/users.js";
 import postRoutes from "./routes/posts.js";
 import communityRoutes from "./routes/communities.js";
 import messageRoutes from "./routes/messages.js";
+import companyRoutes from "./routes/companies.js";
+import opportunityRoutes from "./routes/opportunities.js";
+import recruiterRoutes from "./routes/recruiters.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,6 +62,9 @@ app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/communities", communityRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/companies", companyRoutes);
+app.use("/api/opportunities", opportunityRoutes);
+app.use("/api/recruiters", recruiterRoutes);
 
 // Health check
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));

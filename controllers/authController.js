@@ -152,5 +152,6 @@ export const getMe = async (req, res) => {
     coverPhoto: req.user.coverPhoto,
     bio: req.user.bio,
     university: req.user.university,
+    circuitScore: req.user.circuitScore ?? 0,
   });
 };

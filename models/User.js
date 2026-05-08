@@ -14,6 +14,22 @@ const userSchema = new mongoose.Schema(
     bio: { type: String, default: '', maxlength: 300 },
     university: { type: String, default: '' },
     interests: [{ type: String, trim: true }],
+    circuitScore: { type: Number, default: 0, min: 0, max: 100 },
+    circuitTier: {
+      type: String,
+      enum: ['Starter', 'Rising', 'Established', 'Circuit Elite'],
+      default: 'Starter',
+    },
+    // Stored component sub-scores for permanence (opportunitiesScore never decays)
+    goalsScore: { type: Number, default: 0 },
+    opportunitiesScore: { type: Number, default: 0 },
+    // Streak shield — one per calendar month
+    streakShieldAvailable: { type: Boolean, default: true },
+    streakShieldUsedMonth: { type: Number, default: null }, // 0-11 (JS UTC month)
+    // Tracks last known activity for inactivity decay
+    lastActivityDate: { type: Date, default: null },
+    savedOpportunities: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Opportunity' }],
+    discoverable: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -1,6 +1,7 @@
 import Post from '../models/Post.js';
 import Community from '../models/Community.js';
 import { updateStreak } from '../utils/streakUpdater.js';
+import { updateCircuitScore } from '../utils/circuitScoreUpdater.js';
 import { uploadToCloudinary } from '../middleware/uploadMiddleware.js';
 
 // @desc    Get paginated feed
@@ -58,13 +59,16 @@ export const createPost = async (req, res) => {
   const communities = await Community.find({ members: req.user._id }, '_id').lean();
   await Promise.all(communities.map((c) => updateStreak(req.user._id, c._id)));
 
+  // Recompute circuit score (non-blocking)
+  updateCircuitScore(req.user._id);
+
   res.status(201).json(populated);
 };
 
 // @desc    Like / unlike a post
 // @route   PUT /api/posts/:id/like
 export const likePost = async (req, res) => {
-  const post = await Post.findById(req.params.id).select('likes');
+  const post = await Post.findById(req.params.id).select('likes author');
   if (!post) return res.status(404).json({ message: 'Post not found' });
 
   const userId = req.user._id;
@@ -77,6 +81,11 @@ export const likePost = async (req, res) => {
   }
 
   await post.save();
+
+  // Reactions affect both the liker (participation) and post author (post score)
+  updateCircuitScore(userId);
+  if (!post.author.equals(userId)) updateCircuitScore(post.author);
+
   res.json({ likes: post.likes, liked: !liked });
 };
 
@@ -86,12 +95,16 @@ export const commentPost = async (req, res) => {
   const { text } = req.body;
   if (!text) return res.status(400).json({ message: 'Comment text is required' });
 
-  const post = await Post.findById(req.params.id);
+  const post = await Post.findById(req.params.id).select('author comments');
   if (!post) return res.status(404).json({ message: 'Post not found' });
 
   post.comments.push({ user: req.user._id, text });
   await post.save();
   await post.populate('comments.user', 'name avatar');
+
+  // Comment affects the commenter (participation/post) and the post author (commentsReceived)
+  updateCircuitScore(req.user._id);
+  if (!post.author.equals(req.user._id)) updateCircuitScore(post.author);
 
   res.status(201).json(post.comments[post.comments.length - 1]);
 };

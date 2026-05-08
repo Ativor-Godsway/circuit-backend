@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import CommunityMessage from '../models/CommunityMessage.js';
 import { uploadToCloudinary } from '../middleware/uploadMiddleware.js';
 import { updateStreak } from '../utils/streakUpdater.js';
+import { updateCircuitScore } from '../utils/circuitScoreUpdater.js';
 
 // @desc    Get all communities — client handles category/search/tab filtering
 // @route   GET /api/communities
@@ -92,6 +93,8 @@ export const joinCommunity = async (req, res) => {
   if (!community.members.includes(req.user._id)) {
     community.members.push(req.user._id);
     await community.save();
+    // Recompute score — joining a community boosts participation component
+    updateCircuitScore(req.user._id);
   }
 
   community = await Community.findById(req.params.id).populate('admin', 'name avatar');
@@ -159,6 +162,10 @@ export const updateGoalProgress = async (req, res) => {
   if (status) goal.status = status;
 
   await goal.save();
+
+  // Recompute circuit score when goal progress changes (non-blocking)
+  updateCircuitScore(req.user._id);
+
   res.json(goal);
 };
 
@@ -171,16 +178,15 @@ export const getCommunityGoals = async (req, res) => {
   res.json(goals);
 };
 
-// @desc    Get community members with streaks
+// @desc    Get community members with streaks and circuit scores
 // @route   GET /api/communities/:id/members
 export const getCommunityMembers = async (req, res) => {
   const community = await Community.findById(req.params.id).populate(
     'members',
-    'name avatar university'
+    'name avatar university circuitScore circuitTier'
   );
   if (!community) return res.status(404).json({ message: 'Community not found' });
 
-  // Attach streak data for each member
   const streaks = await Streak.find({ community: req.params.id });
   const streakMap = Object.fromEntries(streaks.map((s) => [s.user.toString(), s]));
 
@@ -191,6 +197,8 @@ export const getCommunityMembers = async (req, res) => {
       name: m.name,
       avatar: m.avatar,
       university: m.university,
+      circuitScore: m.circuitScore || 0,
+      circuitTier: m.circuitTier || 'Starter',
       isAdmin: community.admin.equals(m._id),
       currentStreak: streak?.currentStreak || 0,
       longestStreak: streak?.longestStreak || 0,
@@ -198,6 +206,30 @@ export const getCommunityMembers = async (req, res) => {
   });
 
   res.json(membersWithStreaks);
+};
+
+// @desc    Circuit Score leaderboard — top 5 members in this community by score
+// @route   GET /api/communities/:id/circuit-leaderboard
+export const getCircuitLeaderboard = async (req, res) => {
+  const community = await Community.findById(req.params.id)
+    .populate('members', 'name avatar circuitScore circuitTier university')
+    .lean();
+
+  if (!community) return res.status(404).json({ message: 'Community not found' });
+
+  const top5 = [...community.members]
+    .sort((a, b) => (b.circuitScore || 0) - (a.circuitScore || 0))
+    .slice(0, 5)
+    .map((m) => ({
+      _id: m._id,
+      name: m.name,
+      avatar: m.avatar,
+      university: m.university,
+      circuitScore: m.circuitScore || 0,
+      circuitTier: m.circuitTier || 'Starter',
+    }));
+
+  res.json(top5);
 };
 
 // @desc    Invite user to community by email or username

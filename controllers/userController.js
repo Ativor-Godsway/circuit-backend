@@ -3,6 +3,7 @@ import Post from '../models/Post.js';
 import Streak from '../models/Streak.js';
 import Goal from '../models/Goal.js';
 import { uploadToCloudinary } from '../middleware/uploadMiddleware.js';
+import { computeScoreBreakdown, getImprovementTip, getTier } from '../utils/circuitScoreUpdater.js';
 
 // @desc    Get user by ID
 // @route   GET /api/users/:id
@@ -19,13 +20,14 @@ export const updateUser = async (req, res) => {
     return res.status(403).json({ message: 'Not authorized to update this profile' });
   }
 
-  const { name, bio, university, interests } = req.body;
+  const { name, bio, university, interests, discoverable } = req.body;
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: 'User not found' });
 
   if (name) user.name = name;
   if (bio !== undefined) user.bio = bio;
   if (university !== undefined) user.university = university;
+  if (discoverable !== undefined) user.discoverable = discoverable === 'true' || discoverable === true;
 
   if (interests !== undefined) {
     try {
@@ -54,6 +56,7 @@ export const updateUser = async (req, res) => {
     bio: updated.bio,
     university: updated.university,
     interests: updated.interests,
+    discoverable: updated.discoverable,
   });
 };
 
@@ -110,6 +113,20 @@ export const getSuggestions = async (req, res) => {
     { $project: { name: 1, avatar: 1, university: 1 } },
   ]);
   res.json(users);
+};
+
+// @desc    Circuit Score breakdown — visible only to the profile owner
+// @route   GET /api/users/:id/score-breakdown
+export const getScoreBreakdown = async (req, res) => {
+  if (req.user._id.toString() !== req.params.id) {
+    return res.status(403).json({ message: 'Score breakdown is only visible to the profile owner' });
+  }
+
+  const breakdown = await computeScoreBreakdown(req.params.id);
+  const tier = getTier(breakdown.total);
+  const tip  = getImprovementTip(breakdown);
+
+  res.json({ ...breakdown, tier, tip });
 };
 
 // @desc    Search users by name (excludes current user)

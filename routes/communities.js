@@ -11,6 +11,7 @@ import {
   updateGoalProgress,
   getCommunityGoals,
   getCommunityMembers,
+  getCircuitLeaderboard,
   inviteToCommunit,
   getCommunityMessages,
   sendCommunityMessage,
@@ -28,6 +29,7 @@ router.post("/:id/goals", protect, addGoal);
 router.put("/:id/goals/:goalId", protect, updateGoalProgress);
 router.get("/:id/goals", protect, getCommunityGoals);
 router.get("/:id/members", protect, getCommunityMembers);
+router.get("/:id/circuit-leaderboard", protect, getCircuitLeaderboard);
 router.post("/:id/invite", protect, inviteToCommunit);
 router.get("/:id/messages", protect, getCommunityMessages);
 router.post("/:id/messages", protect, upload.single("image"), sendCommunityMessage);

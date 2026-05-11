@@ -6,7 +6,7 @@ import { updateCircuitScore } from '../utils/circuitScoreUpdater.js';
 // @route GET /api/opportunities
 export const getOpportunities = async (req, res) => {
   const { type, search, remote, tag, page = 1, limit = 20 } = req.query;
-  const filter = { status: 'active' };
+  const filter = { status: { $in: ['active', 'taken'] } };
 
   if (type && ['job', 'challenge', 'gig'].includes(type)) filter.type = type;
   if (remote === 'true') filter.remote = true;
@@ -18,6 +18,7 @@ export const getOpportunities = async (req, res) => {
   const [opportunities, total] = await Promise.all([
     Opportunity.find(filter)
       .populate('company', 'name logo verified location')
+      .populate('recruiter', 'fullName logo companyName')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit))
@@ -25,7 +26,6 @@ export const getOpportunities = async (req, res) => {
     Opportunity.countDocuments(filter),
   ]);
 
-  // Attach isSaved and hasApplied flags for the requesting user
   const userId = req.user?._id;
   let savedSet = new Set();
   let appliedSet = new Set();
@@ -54,6 +54,7 @@ export const getSavedOpportunities = async (req, res) => {
 
   const opportunities = await Opportunity.find({ _id: { $in: savedIds } })
     .populate('company', 'name logo verified location')
+    .populate('recruiter', 'fullName logo companyName')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -72,16 +73,26 @@ export const getSavedOpportunities = async (req, res) => {
 // @route GET /api/opportunities/my-applications
 export const getMyApplications = async (req, res) => {
   const apps = await Application.find({ user: req.user._id })
-    .populate({ path: 'opportunity', populate: { path: 'company', select: 'name logo verified' } })
+    .populate({ path: 'opportunity', populate: [{ path: 'company', select: 'name logo verified' }, { path: 'recruiter', select: 'fullName logo companyName' }] })
     .sort({ createdAt: -1 })
     .lean();
   res.json(apps);
+};
+
+// @route GET /api/opportunities/:id/my-application
+export const getMyApplicationForOpportunity = async (req, res) => {
+  const app = await Application.findOne({ opportunity: req.params.id, user: req.user._id })
+    .populate({ path: 'opportunity', populate: [{ path: 'company', select: 'name logo verified' }, { path: 'recruiter', select: 'fullName logo companyName' }] })
+    .lean();
+  if (!app) return res.status(404).json({ message: 'Application not found' });
+  res.json(app);
 };
 
 // @route GET /api/opportunities/:id
 export const getOpportunityById = async (req, res) => {
   const opp = await Opportunity.findById(req.params.id)
     .populate('company', 'name logo verified location website')
+    .populate('recruiter', 'fullName logo companyName location website')
     .lean();
 
   if (!opp) return res.status(404).json({ message: 'Opportunity not found' });
@@ -108,11 +119,13 @@ export const getOpportunityById = async (req, res) => {
 
 // @route POST /api/opportunities/:id/apply
 export const applyToOpportunity = async (req, res) => {
-  const { coverNote } = req.body;
+  const { coverNote, proposal, relevantProjects, cvFile, cvFileName } = req.body;
 
   const opp = await Opportunity.findById(req.params.id);
   if (!opp) return res.status(404).json({ message: 'Opportunity not found' });
-  if (opp.status === 'closed') return res.status(400).json({ message: 'This opportunity is no longer accepting applications' });
+  if (opp.status === 'closed' || opp.status === 'taken') {
+    return res.status(400).json({ message: 'This opportunity is no longer accepting applications' });
+  }
 
   // Circuit score gate for challenges
   if (opp.minCircuitScore > 0 && req.user.circuitScore < opp.minCircuitScore) {
@@ -121,13 +134,44 @@ export const applyToOpportunity = async (req, res) => {
     });
   }
 
+  // CV required gate for jobs
+  if (opp.type === 'job' && opp.cvRequired === 'required' && !cvFile) {
+    return res.status(400).json({ message: 'A CV is required for this application' });
+  }
+
   try {
-    const app = await Application.create({
+    const appData = {
       opportunity: opp._id,
       user: req.user._id,
-      coverNote: (coverNote || '').slice(0, 300),
-    });
+    };
 
+    if (opp.type === 'gig') {
+      appData.proposal = (proposal || '').slice(0, 1500);
+      appData.relevantProjects = Array.isArray(relevantProjects)
+        ? relevantProjects.slice(0, 5).map((p) => ({
+            title:       p.title || '',
+            description: (p.description || '').slice(0, 300),
+            url:         p.url || '',
+            image:       p.image || '',
+          }))
+        : [];
+    } else {
+      appData.coverNote = (coverNote || '').slice(0, 300);
+      appData.relevantProjects = Array.isArray(relevantProjects)
+        ? relevantProjects.slice(0, 5).map((p) => ({
+            title:       p.title || '',
+            description: (p.description || '').slice(0, 300),
+            url:         p.url || '',
+            image:       p.image || '',
+          }))
+        : [];
+      if (opp.type === 'job' && cvFile) {
+        appData.cvFile = cvFile;
+        appData.cvFileName = cvFileName || 'cv';
+      }
+    }
+
+    const app = await Application.create(appData);
     await Opportunity.findByIdAndUpdate(opp._id, { $inc: { applicantCount: 1 } });
 
     // Challenge entry counts toward opportunitiesScore
@@ -142,9 +186,22 @@ export const applyToOpportunity = async (req, res) => {
   }
 };
 
+// @route DELETE /api/opportunities/applications/:appId
+export const deleteApplication = async (req, res) => {
+  const app = await Application.findById(req.params.appId);
+  if (!app) return res.status(404).json({ message: 'Application not found' });
+  if (app.user.toString() !== req.user._id.toString()) {
+    return res.status(403).json({ message: 'Not authorized' });
+  }
+
+  await app.deleteOne();
+  // Decrement applicant count (fire-and-forget)
+  Opportunity.findByIdAndUpdate(app.opportunity, { $inc: { applicantCount: -1 } }).catch(() => {});
+
+  res.json({ message: 'Application withdrawn' });
+};
+
 // @route PUT /api/opportunities/applications/:appId/rate
-// Company rates a completed gig (1–5 stars). Only valid for gig opportunities
-// where the application has been accepted.
 export const rateGigApplication = async (req, res) => {
   const { rating } = req.body;
   if (!rating || rating < 1 || rating > 5) {
@@ -163,9 +220,7 @@ export const rateGigApplication = async (req, res) => {
   app.ratedAt = new Date();
   await app.save();
 
-  // Update opportunitiesScore for the applicant (non-blocking)
   updateCircuitScore(app.user);
-
   res.json(app);
 };
 

@@ -16,7 +16,7 @@ export const getPosts = async (req, res) => {
   const [total, posts] = await Promise.all([
     Post.countDocuments(query),
     Post.find(query)
-      .populate('author',        'name avatar')
+      .populate('author',        'name avatar circuitTier circuitScore')
       .populate('comments.user', 'name avatar')
       .select('author text image category likes comments createdAt')
       .lean()
@@ -53,7 +53,7 @@ export const createPost = async (req, res) => {
     image,
   });
 
-  const populated = await post.populate('author', 'name avatar');
+  const populated = await post.populate('author', 'name avatar circuitTier circuitScore');
 
   // Update streak for every community the user belongs to
   const communities = await Community.find({ members: req.user._id }, '_id').lean();

@@ -13,6 +13,7 @@ const communitySchema = new mongoose.Schema(
     privacy: { type: String, enum: ['public', 'private'], default: 'public' },
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    tags: [{ type: String, trim: true, lowercase: true }],
   },
   { timestamps: true }
 );

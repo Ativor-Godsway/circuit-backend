@@ -7,6 +7,8 @@ import {
   getRecruiterMe,
   updateRecruiterMe,
   requestVerification,
+  getRecruiterPublicProfile,
+  getRecruiterUserProfile,
   getMyOpportunities,
   createOpportunity,
   updateOpportunity,
@@ -55,5 +57,11 @@ router.get('/me/invites', protectRecruiter, getMyInvites);
 router.get('/me/messages', protectRecruiter, getRecruiterThreads);
 router.get('/me/messages/:userId', protectRecruiter, getRecruiterThread);
 router.post('/me/messages/:userId', protectRecruiter, sendRecruiterMessage);
+
+// Public recruiter profile (no auth — after all /me routes to avoid conflict)
+router.get('/:id', getRecruiterPublicProfile);
+
+// Recruiter viewing a user's full profile
+router.get('/talent/:userId/profile', protectRecruiter, getRecruiterUserProfile);
 
 export default router;

@@ -20,6 +20,7 @@ import messageRoutes from "./routes/messages.js";
 import companyRoutes from "./routes/companies.js";
 import opportunityRoutes from "./routes/opportunities.js";
 import recruiterRoutes from "./routes/recruiters.js";
+import onboardingRoutes from "./routes/onboarding.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,8 +49,8 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads"), {
   maxAge: "7d",
   etag: true,
@@ -65,6 +66,7 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/opportunities", opportunityRoutes);
 app.use("/api/recruiters", recruiterRoutes);
+app.use("/api/onboarding", onboardingRoutes);
 
 // Health check
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));

@@ -6,6 +6,9 @@ import User from '../models/User.js';
 import Notification from '../models/Notification.js';
 import OpportunityInvite from '../models/OpportunityInvite.js';
 import RecruiterMessage from '../models/RecruiterMessage.js';
+import WorkExperience from '../models/WorkExperience.js';
+import Education from '../models/Education.js';
+import Project from '../models/Project.js';
 import { uploadToCloudinary } from '../middleware/uploadMiddleware.js';
 
 const generateRecruiterToken = (id) =>
@@ -107,6 +110,35 @@ export const requestVerification = async (req, res) => {
   res.json({ message: 'Verification request submitted' });
 };
 
+// @route GET /api/recruiters/:id  — public profile (no auth required)
+export const getRecruiterPublicProfile = async (req, res) => {
+  const recruiter = await Recruiter.findById(req.params.id).select('-password -email').lean();
+  if (!recruiter) return res.status(404).json({ message: 'Recruiter not found' });
+
+  const opportunities = await Opportunity.find({ recruiter: recruiter._id, status: 'active' })
+    .sort({ createdAt: -1 })
+    .select('title type payAmount payType location remote tags applicantCount createdAt')
+    .lean();
+
+  res.json({ ...recruiter, opportunities });
+};
+
+// @route GET /api/recruiters/talent/:userId — full user profile for recruiter review
+export const getRecruiterUserProfile = async (req, res) => {
+  const user = await User.findById(req.params.userId)
+    .select('name avatar bio university location skills circuitScore circuitTier interests createdAt')
+    .lean();
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  const [workEntries, eduEntries, projects] = await Promise.all([
+    WorkExperience.find({ user: req.params.userId }).sort({ startYear: -1 }).lean(),
+    Education.find({ user: req.params.userId }).sort({ startYear: -1 }).lean(),
+    Project.find({ user: req.params.userId }).sort({ createdAt: -1 }).lean(),
+  ]);
+
+  res.json({ ...user, workExperience: workEntries, education: eduEntries, projects });
+};
+
 // ── Opportunity CRUD ──────────────────────────────────────────────────────────
 
 // @route GET /api/recruiters/me/opportunities
@@ -121,7 +153,7 @@ export const getMyOpportunities = async (req, res) => {
 // @route POST /api/recruiters/me/opportunities
 export const createOpportunity = async (req, res) => {
   const {
-    type, title, description, requirements, tags, location, remote,
+    type, title, description, requirements, cvRequired, tags, location, remote,
     payAmount, payType, deadline, minCircuitScore, status,
   } = req.body;
 
@@ -133,7 +165,8 @@ export const createOpportunity = async (req, res) => {
     type,
     title,
     description,
-    requirements: requirements || '',
+    requirements: Array.isArray(requirements) ? requirements : (requirements ? [requirements] : []),
+    cvRequired: type === 'job' && cvRequired ? cvRequired : 'not_needed',
     recruiter: req.recruiter._id,
     tags: tags ? (Array.isArray(tags) ? tags : JSON.parse(tags)) : [],
     location: location || '',
@@ -153,7 +186,7 @@ export const updateOpportunity = async (req, res) => {
   const opp = await Opportunity.findOne({ _id: req.params.id, recruiter: req.recruiter._id });
   if (!opp) return res.status(404).json({ message: 'Opportunity not found' });
 
-  const allowed = ['title', 'description', 'requirements', 'tags', 'location', 'remote', 'payAmount', 'payType', 'deadline', 'status', 'minCircuitScore'];
+  const allowed = ['title', 'description', 'requirements', 'cvRequired', 'tags', 'location', 'remote', 'payAmount', 'payType', 'deadline', 'status', 'minCircuitScore'];
   allowed.forEach((key) => {
     if (req.body[key] !== undefined) {
       if (key === 'tags') opp[key] = Array.isArray(req.body[key]) ? req.body[key] : JSON.parse(req.body[key]);

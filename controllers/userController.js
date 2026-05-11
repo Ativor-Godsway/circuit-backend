@@ -2,15 +2,25 @@ import User from '../models/User.js';
 import Post from '../models/Post.js';
 import Streak from '../models/Streak.js';
 import Goal from '../models/Goal.js';
+import Follow from '../models/Follow.js';
 import { uploadToCloudinary } from '../middleware/uploadMiddleware.js';
 import { computeScoreBreakdown, getImprovementTip, getTier } from '../utils/circuitScoreUpdater.js';
+import { updateProfileCompletion } from '../utils/profileCompletion.js';
 
 // @desc    Get user by ID
 // @route   GET /api/users/:id
 export const getUserById = async (req, res) => {
-  const user = await User.findById(req.params.id).select('-password');
+  const user = await User.findById(req.params.id).select('-password').lean();
   if (!user) return res.status(404).json({ message: 'User not found' });
-  res.json(user);
+
+  // Attach isFollowing if viewer is logged in
+  let isFollowing = false;
+  if (req.user) {
+    const follow = await Follow.findOne({ follower: req.user._id, following: user._id }).lean();
+    isFollowing = !!follow;
+  }
+
+  res.json({ ...user, isFollowing });
 };
 
 // @desc    Update user profile (own only)
@@ -20,21 +30,21 @@ export const updateUser = async (req, res) => {
     return res.status(403).json({ message: 'Not authorized to update this profile' });
   }
 
-  const { name, bio, university, interests, discoverable } = req.body;
+  const { name, bio, university, interests, discoverable, location, skills } = req.body;
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: 'User not found' });
 
   if (name) user.name = name;
   if (bio !== undefined) user.bio = bio;
   if (university !== undefined) user.university = university;
+  if (location !== undefined) user.location = location;
   if (discoverable !== undefined) user.discoverable = discoverable === 'true' || discoverable === true;
 
   if (interests !== undefined) {
-    try {
-      user.interests = JSON.parse(interests);
-    } catch {
-      user.interests = [];
-    }
+    try { user.interests = JSON.parse(interests); } catch { user.interests = []; }
+  }
+  if (skills !== undefined) {
+    try { user.skills = JSON.parse(skills); } catch { user.skills = []; }
   }
 
   if (req.files?.avatar?.[0]) {
@@ -47,6 +57,8 @@ export const updateUser = async (req, res) => {
   }
 
   const updated = await user.save();
+  updateProfileCompletion(user._id).catch(() => {});
+
   res.json({
     _id: updated._id,
     name: updated.name,
@@ -55,8 +67,14 @@ export const updateUser = async (req, res) => {
     coverPhoto: updated.coverPhoto,
     bio: updated.bio,
     university: updated.university,
+    location: updated.location,
     interests: updated.interests,
+    skills: updated.skills,
     discoverable: updated.discoverable,
+    onboardingComplete: updated.onboardingComplete,
+    circuitScore: updated.circuitScore,
+    circuitTier: updated.circuitTier,
+    profileCompletion: updated.profileCompletion,
   });
 };
 
@@ -64,7 +82,7 @@ export const updateUser = async (req, res) => {
 // @route   GET /api/users/:id/posts
 export const getUserPosts = async (req, res) => {
   const posts = await Post.find({ author: req.params.id })
-    .populate('author', 'name avatar')
+    .populate('author', 'name avatar circuitTier circuitScore')
     .sort({ createdAt: -1 })
     .limit(50);
   res.json(posts);
@@ -110,7 +128,7 @@ export const getSuggestions = async (req, res) => {
   const users = await User.aggregate([
     { $match: { _id: { $ne: req.user._id } } },
     { $sample: { size: 10 } },
-    { $project: { name: 1, avatar: 1, university: 1 } },
+    { $project: { name: 1, avatar: 1, university: 1, circuitTier: 1, circuitScore: 1 } },
   ]);
   res.json(users);
 };
@@ -139,8 +157,62 @@ export const searchUsers = async (req, res) => {
     _id: { $ne: req.user._id },
     name: { $regex: q.trim(), $options: 'i' },
   })
-    .select('name avatar university')
+    .select('name avatar university circuitTier circuitScore')
     .limit(10);
 
   res.json(users);
+};
+
+// @desc    Follow a user
+// @route   POST /api/users/:id/follow
+export const followUser = async (req, res) => {
+  const targetId = req.params.id;
+  if (targetId === req.user._id.toString()) {
+    return res.status(400).json({ message: 'You cannot follow yourself' });
+  }
+
+  const target = await User.findById(targetId).select('_id');
+  if (!target) return res.status(404).json({ message: 'User not found' });
+
+  try {
+    await Follow.create({ follower: req.user._id, following: targetId });
+    User.findByIdAndUpdate(req.user._id, { $inc: { followingCount: 1 } }).catch(() => {});
+    User.findByIdAndUpdate(targetId, { $inc: { followerCount: 1 } }).catch(() => {});
+    res.json({ isFollowing: true });
+  } catch (err) {
+    if (err.code === 11000) return res.json({ isFollowing: true }); // already following
+    throw err;
+  }
+};
+
+// @desc    Unfollow a user
+// @route   DELETE /api/users/:id/follow
+export const unfollowUser = async (req, res) => {
+  const result = await Follow.findOneAndDelete({ follower: req.user._id, following: req.params.id });
+  if (result) {
+    User.findByIdAndUpdate(req.user._id, { $inc: { followingCount: -1 } }).catch(() => {});
+    User.findByIdAndUpdate(req.params.id, { $inc: { followerCount: -1 } }).catch(() => {});
+  }
+  res.json({ isFollowing: false });
+};
+
+// @desc    Get follow stats for own profile (private)
+// @route   GET /api/users/:id/stats
+export const getMyStats = async (req, res) => {
+  if (req.user._id.toString() !== req.params.id) {
+    return res.status(403).json({ message: 'Stats are private' });
+  }
+
+  const [user, postCount, followerCount, followingCount] = await Promise.all([
+    User.findById(req.params.id).select('followerCount followingCount').lean(),
+    Post.countDocuments({ author: req.params.id }),
+    Follow.countDocuments({ following: req.params.id }),
+    Follow.countDocuments({ follower: req.params.id }),
+  ]);
+
+  res.json({
+    posts: postCount,
+    followers: followerCount,
+    following: followingCount,
+  });
 };

@@ -8,6 +8,26 @@ import { uploadToCloudinary } from '../middleware/uploadMiddleware.js';
 const generateToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
+// Shared serializer — every auth response uses the same shape
+const serializeUser = (user, token) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  avatar: user.avatar,
+  coverPhoto: user.coverPhoto || '',
+  bio: user.bio || '',
+  university: user.university || '',
+  location: user.location || '',
+  interests: user.interests || [],
+  skills: user.skills || [],
+  discoverable: user.discoverable ?? false,
+  onboardingComplete: user.onboardingComplete ?? false,
+  circuitScore: user.circuitScore ?? 0,
+  circuitTier: user.circuitTier || 'Starter',
+  profileCompletion: user.profileCompletion ?? 0,
+  token,
+});
+
 // @desc    Register new user
 // @route   POST /api/auth/register
 export const register = async (req, res) => {
@@ -30,14 +50,7 @@ export const register = async (req, res) => {
 
   const user = await User.create({ name, email, password, university: university || '', avatar });
 
-  res.status(201).json({
-    _id: user._id,
-    name: user.name,
-    email: user.email,
-    avatar: user.avatar,
-    university: user.university,
-    token: generateToken(user._id),
-  });
+  res.status(201).json(serializeUser(user, generateToken(user._id)));
 };
 
 // @desc    Login user
@@ -49,20 +62,12 @@ export const login = async (req, res) => {
     return res.status(400).json({ message: 'Email and password are required' });
   }
 
-  // Need password field for comparison
   const user = await User.findOne({ email }).select('+password');
   if (!user || !(await user.matchPassword(password))) {
     return res.status(401).json({ message: 'Invalid email or password' });
   }
 
-  res.json({
-    _id: user._id,
-    name: user.name,
-    email: user.email,
-    avatar: user.avatar,
-    university: user.university,
-    token: generateToken(user._id),
-  });
+  res.json(serializeUser(user, generateToken(user._id)));
 };
 
 // @desc    Google OAuth — verify ID token, find or create user
@@ -91,17 +96,10 @@ export const googleAuth = async (req, res) => {
     await user.save();
   }
 
-  res.json({
-    _id: user._id,
-    name: user.name,
-    email: user.email,
-    avatar: user.avatar,
-    university: user.university,
-    token: generateToken(user._id),
-  });
+  res.json(serializeUser(user, generateToken(user._id)));
 };
 
-// @desc    Apple Sign-In — verify identity token, find or create user
+// @desc    Apple Sign-In
 // @route   POST /api/auth/apple
 export const appleAuth = async (req, res) => {
   const { identityToken, user: appleUser } = req.body;
@@ -117,7 +115,6 @@ export const appleAuth = async (req, res) => {
 
   const appleId = appleIdTokenClaims.sub;
   const email = appleIdTokenClaims.email;
-  // Apple only sends name on first sign-in, passed separately
   const name = appleUser?.name
     ? `${appleUser.name.firstName || ''} ${appleUser.name.lastName || ''}`.trim()
     : email?.split('@')[0] || 'Apple User';
@@ -131,27 +128,52 @@ export const appleAuth = async (req, res) => {
     await user.save();
   }
 
-  res.json({
-    _id: user._id,
-    name: user.name,
-    email: user.email,
-    avatar: user.avatar,
-    university: user.university,
-    token: generateToken(user._id),
-  });
+  res.json(serializeUser(user, generateToken(user._id)));
 };
 
 // @desc    Get current logged-in user
 // @route   GET /api/auth/me
 export const getMe = async (req, res) => {
-  res.json({
-    _id: req.user._id,
-    name: req.user.name,
-    email: req.user.email,
-    avatar: req.user.avatar,
-    coverPhoto: req.user.coverPhoto,
-    bio: req.user.bio,
-    university: req.user.university,
-    circuitScore: req.user.circuitScore ?? 0,
-  });
+  res.json(serializeUser(req.user, null));
+};
+
+// @desc    Change password
+// @route   PUT /api/auth/change-password
+export const changePassword = async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ message: 'Current and new password are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: 'New password must be at least 8 characters' });
+  }
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!user.password) {
+    return res.status(400).json({ message: 'This account uses social sign-in — no password to change' });
+  }
+  const match = await user.matchPassword(currentPassword);
+  if (!match) {
+    return res.status(401).json({ message: 'Current password is incorrect' });
+  }
+
+  user.password = newPassword;
+  await user.save();
+  res.json({ message: 'Password updated successfully' });
+};
+
+// @desc    Delete user account
+// @route   DELETE /api/auth/account
+export const deleteAccount = async (req, res) => {
+  const { password } = req.body;
+  const user = await User.findById(req.user._id).select('+password');
+
+  if (user.password) {
+    if (!password) return res.status(400).json({ message: 'Password required to delete account' });
+    const match = await user.matchPassword(password);
+    if (!match) return res.status(401).json({ message: 'Incorrect password' });
+  }
+
+  await user.deleteOne();
+  res.json({ message: 'Account deleted' });
 };

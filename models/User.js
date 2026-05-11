@@ -30,6 +30,12 @@ const userSchema = new mongoose.Schema(
     lastActivityDate: { type: Date, default: null },
     savedOpportunities: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Opportunity' }],
     discoverable: { type: Boolean, default: false },
+    onboardingComplete: { type: Boolean, default: false },
+    location: { type: String, default: '' },
+    skills: [{ type: String, trim: true }],
+    profileCompletion: { type: Number, default: 0, min: 0, max: 100 },
+    followerCount: { type: Number, default: 0, min: 0 },
+    followingCount: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );
